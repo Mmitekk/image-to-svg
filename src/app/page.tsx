@@ -28,9 +28,15 @@ import {
   Check,
   FileImage,
   Loader2,
+  Sparkles,
+  Layers,
+  PenTool,
 } from 'lucide-react';
 
+type TraceMode = 'icon' | 'detailed' | 'poster';
+
 interface ConvertOptions {
+  mode: TraceMode;
   removeBg: boolean;
   bgColorTolerance: number;
   numberOfColors: number;
@@ -41,19 +47,76 @@ interface ConvertOptions {
   ltres: number;
   qtres: number;
   roundcoords: number;
+  turdSize: number;
+  alphaMax: number;
+  optCurve: boolean;
+  cornerThreshold: number;
 }
 
+const modePresets: Record<TraceMode, Partial<ConvertOptions> & { label: string; description: string; icon: React.ReactNode }> = {
+  icon: {
+    label: 'Иконка',
+    description: 'Чистый монохромный контур. Идеально для иконок и логотипов.',
+    icon: <PenTool className="w-4 h-4" />,
+    numberOfColors: 2,
+    pathOmit: 10,
+    strokeWidth: 0,
+    ltres: 0.5,
+    qtres: 0.5,
+    roundcoords: 2,
+    turdSize: 5,
+    alphaMax: 1,
+    optCurve: true,
+    cornerThreshold: 1,
+  },
+  poster: {
+    label: 'Плакат',
+    description: 'Цветные слои с чистыми контурами. Хорошо для иллюстраций.',
+    icon: <Layers className="w-4 h-4" />,
+    numberOfColors: 6,
+    pathOmit: 15,
+    strokeWidth: 0,
+    ltres: 0.8,
+    qtres: 0.8,
+    roundcoords: 1,
+    turdSize: 3,
+    alphaMax: 1,
+    optCurve: true,
+    cornerThreshold: 1,
+  },
+  detailed: {
+    label: 'Детальная',
+    description: 'Максимальная детализация цвета. Для фотографий и сложных изображений.',
+    icon: <Sparkles className="w-4 h-4" />,
+    numberOfColors: 24,
+    pathOmit: 20,
+    strokeWidth: 1,
+    ltres: 1,
+    qtres: 1,
+    roundcoords: 1,
+    turdSize: 2,
+    alphaMax: 1,
+    optCurve: true,
+    cornerThreshold: 1,
+  },
+};
+
 const defaultOptions: ConvertOptions = {
+  mode: 'poster',
   removeBg: false,
   bgColorTolerance: 0.15,
-  numberOfColors: 16,
+  numberOfColors: 6,
   scale: 1,
-  strokeWidth: 1,
+  strokeWidth: 0,
   blurRadius: 0,
-  pathOmit: 8,
-  ltres: 1,
-  qtres: 1,
+  pathOmit: 15,
+  ltres: 0.8,
+  qtres: 0.8,
   roundcoords: 1,
+  turdSize: 3,
+  alphaMax: 1,
+  optCurve: true,
+  cornerThreshold: 1,
 };
 
 export default function Home() {
@@ -74,6 +137,24 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleModeChange = useCallback((mode: TraceMode) => {
+    const preset = modePresets[mode];
+    setOptions((prev) => ({
+      ...prev,
+      mode,
+      numberOfColors: preset.numberOfColors ?? prev.numberOfColors,
+      pathOmit: preset.pathOmit ?? prev.pathOmit,
+      strokeWidth: preset.strokeWidth ?? prev.strokeWidth,
+      ltres: preset.ltres ?? prev.ltres,
+      qtres: preset.qtres ?? prev.qtres,
+      roundcoords: preset.roundcoords ?? prev.roundcoords,
+      turdSize: preset.turdSize ?? prev.turdSize,
+      alphaMax: preset.alphaMax ?? prev.alphaMax,
+      optCurve: preset.optCurve ?? prev.optCurve,
+      cornerThreshold: preset.cornerThreshold ?? prev.cornerThreshold,
+    }));
+  }, []);
+
   const handleFileSelect = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) return;
     if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
@@ -86,7 +167,6 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = (e) => {
       setOriginalImage(e.target?.result as string);
-      // Auto-convert
       convertToSvg(file);
     };
     reader.readAsDataURL(file);
@@ -115,7 +195,8 @@ export default function Home() {
         setProgress(80);
 
         if (!response.ok) {
-          throw new Error('Conversion failed');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Conversion failed');
         }
 
         const result = await response.json();
@@ -201,6 +282,8 @@ export default function Home() {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  const currentMode = modePresets[options.mode];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-950 dark:to-gray-900">
@@ -354,6 +437,47 @@ export default function Home() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* Mode Selection */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Режим конвертации</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['icon', 'poster', 'detailed'] as TraceMode[]).map((mode) => {
+                      const preset = modePresets[mode];
+                      const isActive = options.mode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          onClick={() => handleModeChange(mode)}
+                          className={`
+                            flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all duration-200 text-center
+                            ${
+                              isActive
+                                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 shadow-sm'
+                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                            }
+                          `}
+                        >
+                          <div className={`${
+                            isActive ? 'text-emerald-600' : 'text-gray-400'
+                          }`}>
+                            {preset.icon}
+                          </div>
+                          <span className={`text-xs font-medium ${
+                            isActive ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-600 dark:text-gray-400'
+                          }`}>
+                            {preset.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {currentMode.description}
+                  </p>
+                </div>
+
+                <Separator />
+
                 {/* Background Removal */}
                 <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
                   <div className="flex items-center gap-2">
@@ -392,27 +516,29 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Number of Colors */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm flex items-center gap-1.5">
-                      <Palette className="w-3.5 h-3.5" />
-                      Количество цветов
-                    </Label>
-                    <span className="text-xs font-mono text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
-                      {options.numberOfColors}
-                    </span>
+                {/* Number of Colors (not for icon mode) */}
+                {options.mode !== 'icon' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5" />
+                        Количество цветов
+                      </Label>
+                      <span className="text-xs font-mono text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
+                        {options.numberOfColors}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[options.numberOfColors]}
+                      onValueChange={([v]) =>
+                        setOptions((prev) => ({ ...prev, numberOfColors: v }))
+                      }
+                      min={2}
+                      max={options.mode === 'poster' ? 12 : 64}
+                      step={1}
+                    />
                   </div>
-                  <Slider
-                    value={[options.numberOfColors]}
-                    onValueChange={([v]) =>
-                      setOptions((prev) => ({ ...prev, numberOfColors: v }))
-                    }
-                    min={2}
-                    max={64}
-                    step={1}
-                  />
-                </div>
+                )}
 
                 {/* Scale */}
                 <div className="space-y-2">
@@ -436,92 +562,160 @@ export default function Home() {
                 {showSettings && (
                   <>
                     <Separator />
-                    {/* Advanced Settings */}
                     <div className="space-y-3">
                       <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Расширенные
                       </p>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-500">Радиус размытия</Label>
-                          <span className="text-xs font-mono text-gray-400">{options.blurRadius}</span>
-                        </div>
-                        <Slider
-                          value={[options.blurRadius]}
-                          onValueChange={([v]) =>
-                            setOptions((prev) => ({ ...prev, blurRadius: v }))
-                          }
-                          min={0}
-                          max={5}
-                          step={1}
-                        />
-                      </div>
+                      {/* Potrace-specific settings */}
+                      {(options.mode === 'icon' || options.mode === 'poster') && (
+                        <>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Мин. размер пятна (turd)</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.turdSize}</span>
+                            </div>
+                            <Slider
+                              value={[options.turdSize]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, turdSize: v }))
+                              }
+                              min={1}
+                              max={100}
+                              step={1}
+                            />
+                          </div>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-500">Точность линий</Label>
-                          <span className="text-xs font-mono text-gray-400">{options.ltres}</span>
-                        </div>
-                        <Slider
-                          value={[options.ltres * 100]}
-                          onValueChange={([v]) =>
-                            setOptions((prev) => ({ ...prev, ltres: v / 100 }))
-                          }
-                          min={10}
-                          max={500}
-                          step={10}
-                        />
-                      </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Сглаживание углов</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.alphaMax}</span>
+                            </div>
+                            <Slider
+                              value={[options.alphaMax * 100]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, alphaMax: v / 100 }))
+                              }
+                              min={0}
+                              max={134}
+                              step={1}
+                            />
+                          </div>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-500">Точность кривых</Label>
-                          <span className="text-xs font-mono text-gray-400">{options.qtres}</span>
-                        </div>
-                        <Slider
-                          value={[options.qtres * 100]}
-                          onValueChange={([v]) =>
-                            setOptions((prev) => ({ ...prev, qtres: v / 100 }))
-                          }
-                          min={10}
-                          max={500}
-                          step={10}
-                        />
-                      </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Порог углов</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.cornerThreshold}</span>
+                            </div>
+                            <Slider
+                              value={[options.cornerThreshold * 100]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, cornerThreshold: v / 100 }))
+                              }
+                              min={0}
+                              max={100}
+                              step={1}
+                            />
+                          </div>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-500">Мин. размер пути</Label>
-                          <span className="text-xs font-mono text-gray-400">{options.pathOmit}</span>
-                        </div>
-                        <Slider
-                          value={[options.pathOmit]}
-                          onValueChange={([v]) =>
-                            setOptions((prev) => ({ ...prev, pathOmit: v }))
-                          }
-                          min={0}
-                          max={100}
-                          step={1}
-                        />
-                      </div>
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+                            <Label className="text-xs text-gray-500">Оптимизация кривых</Label>
+                            <Switch
+                              checked={options.optCurve}
+                              onCheckedChange={(v) =>
+                                setOptions((prev) => ({ ...prev, optCurve: v }))
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-500">Толщина обводки</Label>
-                          <span className="text-xs font-mono text-gray-400">{options.strokeWidth}</span>
-                        </div>
-                        <Slider
-                          value={[options.strokeWidth * 10]}
-                          onValueChange={([v]) =>
-                            setOptions((prev) => ({ ...prev, strokeWidth: v / 10 }))
-                          }
-                          min={0}
-                          max={50}
-                          step={5}
-                        />
-                      </div>
+                      {/* Imagetracer-specific settings (detailed mode) */}
+                      {options.mode === 'detailed' && (
+                        <>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Радиус размытия</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.blurRadius}</span>
+                            </div>
+                            <Slider
+                              value={[options.blurRadius]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, blurRadius: v }))
+                              }
+                              min={0}
+                              max={5}
+                              step={1}
+                            />
+                          </div>
 
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Точность линий</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.ltres}</span>
+                            </div>
+                            <Slider
+                              value={[options.ltres * 100]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, ltres: v / 100 }))
+                              }
+                              min={5}
+                              max={500}
+                              step={5}
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Точность кривых</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.qtres}</span>
+                            </div>
+                            <Slider
+                              value={[options.qtres * 100]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, qtres: v / 100 }))
+                              }
+                              min={5}
+                              max={500}
+                              step={5}
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Мин. размер пути</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.pathOmit}</span>
+                            </div>
+                            <Slider
+                              value={[options.pathOmit]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, pathOmit: v }))
+                              }
+                              min={0}
+                              max={100}
+                              step={1}
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-gray-500">Толщина обводки</Label>
+                              <span className="text-xs font-mono text-gray-400">{options.strokeWidth}</span>
+                            </div>
+                            <Slider
+                              value={[options.strokeWidth * 10]}
+                              onValueChange={([v]) =>
+                                setOptions((prev) => ({ ...prev, strokeWidth: v / 10 }))
+                              }
+                              min={0}
+                              max={50}
+                              step={5}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* Common: roundcoords */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <Label className="text-xs text-gray-500">Округление координат</Label>
@@ -652,13 +846,16 @@ export default function Home() {
                       </div>
                       <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
                         <Badge variant="outline">
-                          SVG
+                          {options.mode === 'icon' ? 'Иконка' : options.mode === 'poster' ? 'Плакат' : 'Детальная'}
                         </Badge>
                         <span>
                           {svgDimensions.width} × {svgDimensions.height} px
                         </span>
                         <span>
                           {(editedSvgContent.length / 1024).toFixed(1)} KB
+                        </span>
+                        <span>
+                          {editedSvgContent.split('<path').length - 1} путей
                         </span>
                       </div>
                     </TabsContent>

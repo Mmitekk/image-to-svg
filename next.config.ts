@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     ".space-z.ai",
   ],
+  serverExternalPackages: ["jimp", "potrace"],
 };
 
 export default nextConfig;
