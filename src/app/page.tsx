@@ -645,7 +645,7 @@ export default function Home() {
                         >
                           <div
                             style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }}
-                            className="transition-transform duration-200"
+                            className="transition-transform duration-200 [&>svg]:max-w-full [&>svg]:max-h-[460px] [&>svg]:h-auto [&>svg]:w-auto"
                             dangerouslySetInnerHTML={{ __html: editedSvgContent }}
                           />
                         </div>
@@ -710,7 +710,7 @@ export default function Home() {
                           >
                             <div
                               style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }}
-                              className="transition-transform duration-200"
+                              className="transition-transform duration-200 [&>svg]:max-w-full [&>svg]:max-h-[420px] [&>svg]:h-auto [&>svg]:w-auto"
                               dangerouslySetInnerHTML={{ __html: editedSvgContent }}
                             />
                           </div>
@@ -761,7 +761,7 @@ export default function Home() {
                           >
                             <div
                               style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }}
-                              className="transition-transform duration-200"
+                              className="transition-transform duration-200 [&>svg]:max-w-full [&>svg]:max-h-[420px] [&>svg]:h-auto [&>svg]:w-auto"
                               dangerouslySetInnerHTML={{ __html: editedSvgContent }}
                             />
                           </div>

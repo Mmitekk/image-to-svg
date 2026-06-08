@@ -244,7 +244,15 @@ export async function POST(request: NextRequest) {
     };
 
     // Trace to SVG
-    const svgString = ImageTracer.imagedataToSVG(imageData, traceOptions);
+    let svgString = ImageTracer.imagedataToSVG(imageData, traceOptions);
+
+    // Fix: imagetracerjs outputs SVG with viewBox but no width/height attributes,
+    // which causes the SVG to render at 0x0 when injected via dangerouslySetInnerHTML.
+    // Add explicit width and height attributes to the SVG element.
+    svgString = svgString.replace(
+      /<svg\s/,
+      `<svg width="${width}" height="${height}" `
+    );
 
     return NextResponse.json({
       svg: svgString,
