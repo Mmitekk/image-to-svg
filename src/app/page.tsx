@@ -73,11 +73,11 @@ const modePresets: Record<TraceMode, Partial<ConvertOptions> & { label: string; 
     label: 'Плакат',
     description: 'Цветные слои с чистыми контурами. Хорошо для иллюстраций.',
     icon: <Layers className="w-4 h-4" />,
-    numberOfColors: 6,
+    numberOfColors: 8,
     pathOmit: 15,
     strokeWidth: 0,
-    ltres: 0.8,
-    qtres: 0.8,
+    ltres: 0.5,
+    qtres: 0.5,
     roundcoords: 1,
     turdSize: 3,
     alphaMax: 1,
@@ -88,11 +88,11 @@ const modePresets: Record<TraceMode, Partial<ConvertOptions> & { label: string; 
     label: 'Детальная',
     description: 'Максимальная детализация цвета. Для фотографий и сложных изображений.',
     icon: <Sparkles className="w-4 h-4" />,
-    numberOfColors: 24,
-    pathOmit: 20,
+    numberOfColors: 32,
+    pathOmit: 8,
     strokeWidth: 1,
-    ltres: 1,
-    qtres: 1,
+    ltres: 0.5,
+    qtres: 0.5,
     roundcoords: 1,
     turdSize: 2,
     alphaMax: 1,
@@ -105,13 +105,13 @@ const defaultOptions: ConvertOptions = {
   mode: 'poster',
   removeBg: false,
   bgColorTolerance: 0.15,
-  numberOfColors: 6,
+  numberOfColors: 8,
   scale: 1,
   strokeWidth: 0,
   blurRadius: 0,
   pathOmit: 15,
-  ltres: 0.8,
-  qtres: 0.8,
+  ltres: 0.5,
+  qtres: 0.5,
   roundcoords: 1,
   turdSize: 3,
   alphaMax: 1,
@@ -134,8 +134,10 @@ export default function Home() {
   const [svgDimensions, setSvgDimensions] = useState({ width: 0, height: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [imageFileSize, setImageFileSize] = useState<number>(0);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadedFileRef = useRef<File | null>(null);
 
   const handleModeChange = useCallback((mode: TraceMode) => {
     const preset = modePresets[mode];
@@ -161,8 +163,10 @@ export default function Home() {
       return;
     }
 
+    setErrorMessage('');
     setImageFileSize(file.size);
     setOriginalFileName(file.name.replace(/\.[^/.]+$/, ''));
+    uploadedFileRef.current = file;
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -174,10 +178,11 @@ export default function Home() {
 
   const convertToSvg = useCallback(
     async (file?: File) => {
-      const inputFile = file || (fileInputRef.current?.files?.[0]);
+      const inputFile = file || uploadedFileRef.current;
       if (!inputFile) return;
 
       setIsConverting(true);
+      setErrorMessage('');
       setProgress(10);
 
       try {
@@ -190,6 +195,7 @@ export default function Home() {
         const response = await fetch('/api/convert', {
           method: 'POST',
           body: formData,
+          signal: AbortSignal.timeout(120000), // 2 minute timeout
         });
 
         setProgress(80);
@@ -208,6 +214,8 @@ export default function Home() {
         setActiveTab('preview');
       } catch (error) {
         console.error('Conversion error:', error);
+        const msg = error instanceof Error ? error.message : 'Ошибка конвертации';
+        setErrorMessage(msg);
       } finally {
         setIsConverting(false);
         setTimeout(() => setProgress(0), 1000);
@@ -270,8 +278,10 @@ export default function Home() {
     setEditedSvgContent('');
     setOriginalFileName('');
     setImageFileSize(0);
+    setErrorMessage('');
     setZoom(1);
     setActiveTab('preview');
+    uploadedFileRef.current = null;
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -752,6 +762,12 @@ export default function Home() {
 
                 {isConverting && (
                   <Progress value={progress} className="h-1.5" />
+                )}
+
+                {errorMessage && (
+                  <div className="mt-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-xs">
+                    {errorMessage}
+                  </div>
                 )}
               </CardContent>
             </Card>
