@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+db/*.db
+prisma
+.env*
+*.log
+download/
+skills/
+worklog.md
+Caddyfile
+start.sh

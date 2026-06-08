@@ -1,0 +1,11 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/convert/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/favicon/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

@@ -202,6 +202,8 @@ function smoothEdges(data: Buffer, width: number, height: number): Buffer {
   return result;
 }
 
+export const maxDuration = 60; // 60 seconds for Vercel serverless functions
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();

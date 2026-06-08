@@ -42,6 +42,8 @@ function createIcoFromPng(pngBuffer: Buffer, width: number, height: number): Buf
   return Buffer.concat([header, entry, pngBuffer]);
 }
 
+export const maxDuration = 60; // 60 seconds for Vercel serverless functions
+
 export async function POST(request: NextRequest) {
   try {
     const body: FaviconRequest = await request.json();
