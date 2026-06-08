@@ -31,6 +31,7 @@ import {
   Sparkles,
   Layers,
   PenTool,
+  Globe,
 } from 'lucide-react';
 
 type TraceMode = 'icon' | 'detailed' | 'poster';
@@ -135,6 +136,9 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [imageFileSize, setImageFileSize] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isGeneratingFavicons, setIsGeneratingFavicons] = useState(false);
+  const [faviconResults, setFaviconResults] = useState<Record<string, { data: string; mimeType: string; filename: string; label: string }> | null>(null);
+  const [showFaviconPanel, setShowFaviconPanel] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadedFileRef = useRef<File | null>(null);
@@ -252,6 +256,65 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   }, [editedSvgContent, svgContent]);
 
+  const handleGenerateFavicons = useCallback(async () => {
+    const svgToUse = editedSvgContent || svgContent;
+    if (!svgToUse) return;
+
+    setIsGeneratingFavicons(true);
+    try {
+      const response = await fetch('/api/favicon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          svg: svgToUse,
+          formats: ['svg-favicon', 'ico-favicon', 'android-192', 'apple-touch', 'favicon-96', 'favicon-32'],
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Favicon generation failed');
+      }
+
+      const result = await response.json();
+      setFaviconResults(result.favicons);
+      setShowFaviconPanel(true);
+    } catch (error) {
+      console.error('Favicon error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Ошибка генерации favicon');
+    } finally {
+      setIsGeneratingFavicons(false);
+    }
+  }, [editedSvgContent, svgContent]);
+
+  const handleDownloadFavicon = useCallback((format: string) => {
+    if (!faviconResults || !faviconResults[format]) return;
+    const item = faviconResults[format];
+    const byteCharacters = atob(item.data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: item.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = item.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [faviconResults]);
+
+  const handleDownloadAllFavicons = useCallback(() => {
+    if (!faviconResults) return;
+    Object.keys(faviconResults).forEach((format, index) => {
+      setTimeout(() => handleDownloadFavicon(format), index * 200);
+    });
+  }, [faviconResults, handleDownloadFavicon]);
+
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
@@ -316,6 +379,20 @@ export default function Home() {
 
           {svgContent && (
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGenerateFavicons}
+                disabled={isGeneratingFavicons}
+                className="gap-1.5"
+              >
+                {isGeneratingFavicons ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Globe className="w-4 h-4" />
+                )}
+                <span className="hidden sm:inline">Favicon</span>
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -771,6 +848,95 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Favicon Generator */}
+            {svgContent && (
+              <Card className="border-0 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/50">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-400 flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      Генератор Favicon
+                    </CardTitle>
+                    {faviconResults && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowFaviconPanel(!showFaviconPanel)}
+                        className="h-7 text-xs"
+                      >
+                        {showFaviconPanel ? 'Скрыть' : 'Показать'}
+                      </Button>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button
+                    onClick={handleGenerateFavicons}
+                    disabled={isGeneratingFavicons}
+                    className="w-full gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+                    size="default"
+                  >
+                    {isGeneratingFavicons ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Globe className="w-4 h-4" />
+                    )}
+                    {isGeneratingFavicons ? 'Генерация...' : 'Создать Favicon'}
+                  </Button>
+
+                  {showFaviconPanel && faviconResults && (
+                    <>
+                      <div className="space-y-2">
+                        {Object.entries(faviconResults).map(([format, item]) => (
+                          <div
+                            key={format}
+                            className="flex items-center justify-between p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700/50"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 flex items-center justify-center flex-shrink-0 overflow-hidden"
+                                style={{ background: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '8px 8px' }}
+                              >
+                                {format === 'svg-favicon' ? (
+                                  <div className="[&>svg]:w-6 [&>svg]:h-6" dangerouslySetInnerHTML={{ __html: editedSvgContent || '' }} />
+                                ) : (
+                                  <img
+                                    src={`data:${item.mimeType};base64,${item.data}`}
+                                    alt={item.label}
+                                    className="w-6 h-6 object-contain"
+                                  />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{item.label}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">{item.filename}</p>
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDownloadFavicon(format)}
+                              className="h-7 w-7 flex-shrink-0"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        onClick={handleDownloadAllFavicons}
+                        variant="outline"
+                        className="w-full gap-2 text-xs"
+                        size="sm"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Скачать все
+                      </Button>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Right Panel - SVG Output & Editor */}

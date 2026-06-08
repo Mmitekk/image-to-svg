@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     ".space-z.ai",
   ],
-  serverExternalPackages: ["jimp", "imagetracerjs", "sharp"],
+  serverExternalPackages: ["jimp", "imagetracerjs", "sharp", "png-to-ico"],
 };
 
 export default nextConfig;
