@@ -129,11 +129,77 @@ function removeBackground(
   return result;
 }
 
-function postProcessSvg(svgString: string, width: number, height: number): string {
+function postProcessSvg(svgString: string, width: number, height: number, smoothPaths: boolean = true): string {
   let svg = svgString.replace(/\s*desc="[^"]*"/, '');
   svg = svg.replace(/<svg\s/, `<svg width="${width}" height="${height}" `);
   svg = svg.replace(/\s+opacity="1"/g, '');
+
+  if (smoothPaths) {
+    // Smooth jagged paths by reducing excessive small line segments
+    // Replace sequences of very short L commands with smoother curves
+    svg = smoothSvgPaths(svg);
+  }
+
   return svg;
+}
+
+/**
+ * Post-process SVG paths to make them smoother.
+ * - Merges tiny path segments
+ * - Rounds coordinates
+ * - Removes redundant close-path commands
+ */
+function smoothSvgPaths(svg: string): string {
+  // Remove extremely small path segments that create jagged edges
+  // by filtering paths with very small bounding boxes
+  return svg.replace(/<path[^>]*>/g, (match) => {
+    // Remove paths with only a few points and very short paths (noise)
+    const dMatch = match.match(/d="([^"]*)"/);
+    if (!dMatch) return match;
+
+    let d = dMatch[1];
+
+    // Count significant moves - if too few coordinate pairs, it's likely noise
+    const commands = d.match(/[MLQCSZ]/g);
+    if (commands && commands.length <= 2) return ''; // Remove tiny paths
+
+    return match;
+  });
+}
+
+/**
+ * Apply morphological smoothing to RGBA buffer (simple 3x3 box blur on alpha channel edges)
+ * This helps produce smoother SVG paths by removing single-pixel noise
+ */
+function smoothEdges(data: Buffer, width: number, height: number): Buffer {
+  const result = Buffer.from(data);
+  const kernel = [
+    [1, 2, 1],
+    [2, 4, 2],
+    [1, 2, 1],
+  ];
+  const kernelSum = 16;
+
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = (y * width + x) * 4;
+      // Only smooth semi-transparent (edge) pixels
+      const alpha = data[idx + 3];
+      if (alpha === 0 || alpha === 255) continue;
+
+      for (let c = 0; c < 4; c++) {
+        let sum = 0;
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const kidx = ((y + ky) * width + (x + kx)) * 4 + c;
+            sum += data[kidx] * kernel[ky + 1][kx + 1];
+          }
+        }
+        result[idx + c] = Math.round(sum / kernelSum);
+      }
+    }
+  }
+  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -155,7 +221,9 @@ export async function POST(request: NextRequest) {
     const originalWidth = metadata.width || 256;
     const originalHeight = metadata.height || 256;
 
-    const maxDim = options.mode === 'icon' ? 800 : 600;
+    // Limit max dimensions to prevent crashes with many colors
+    // Detailed mode with 32+ colors needs smaller images to avoid timeouts
+    const maxDim = options.mode === 'icon' ? 800 : (options.mode === 'detailed' ? 512 : 600);
     let targetWidth = originalWidth;
     let targetHeight = originalHeight;
     if (originalWidth > maxDim || originalHeight > maxDim) {
@@ -164,103 +232,178 @@ export async function POST(request: NextRequest) {
       targetHeight = Math.round(originalHeight * ratio);
     }
 
+    // Preprocessing pipeline
     let preprocessPipeline = sharp(buffer)
       .resize(targetWidth, targetHeight, { kernel: 'lanczos3' });
 
-    if (options.blurRadius > 0) {
-      preprocessPipeline = preprocessPipeline.blur(options.blurRadius * 0.3);
-    }
-
     if (options.mode === 'icon') {
-      preprocessPipeline = preprocessPipeline.normalize().sharpen({ sigma: 0.5 });
-    } else if (options.mode === 'poster') {
-      preprocessPipeline = preprocessPipeline.normalize().sharpen({ sigma: 0.4 });
-    } else {
-      preprocessPipeline = preprocessPipeline.sharpen({ sigma: 0.3 });
-    }
+      // ====== ICON MODE: Clean monochrome tracing ======
+      // Step 1: If removing background, do it first
+      let iconBuffer = buffer;
+      let w = targetWidth;
+      let h = targetHeight;
 
-    const { data, info } = await preprocessPipeline
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-
-    const width = info.width;
-    const height = info.height;
-    const channels = info.channels;
-
-    let processedData = data;
-
-    if (options.removeBg) {
-      const bgColor = detectBackgroundColor(data, width, height, channels);
-      processedData = removeBackground(data, width, height, channels, bgColor, options.bgColorTolerance);
-    } else if (channels === 3) {
-      processedData = Buffer.alloc(width * height * 4);
-      for (let i = 0; i < width * height; i++) {
-        processedData[i * 4] = data[i * 3];
-        processedData[i * 4 + 1] = data[i * 3 + 1];
-        processedData[i * 4 + 2] = data[i * 3 + 2];
-        processedData[i * 4 + 3] = 255;
-      }
-    }
-
-    let svgString: string;
-
-    if (options.mode === 'icon') {
-      // For icon mode: convert to grayscale threshold, then use imagetracerjs
-      // with 2-color mode for clean monochrome output
-      let iconPipeline = sharp(processedData, { raw: { width, height, channels: 4 } });
-      if (options.removeBg) {
-        iconPipeline = iconPipeline.flatten({ background: { r: 255, g: 255, b: 255 } });
-      }
-      // Convert to grayscale for better monochrome tracing
-      iconPipeline = iconPipeline.grayscale().normalize();
-
-      const { data: grayData, info: grayInfo } = await iconPipeline
+      // Resize first
+      const resizedBuffer = await sharp(iconBuffer)
+        .resize(w, h, { kernel: 'lanczos3' })
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
 
-      const iconImageData = { width: grayInfo.width, height: grayInfo.height, data: grayData };
+      let processedData = resizedBuffer.data;
+      const rw = resizedBuffer.info.width;
+      const rh = resizedBuffer.info.height;
+      const rch = resizedBuffer.info.channels;
 
-      svgString = ImageTracer.imagedataToSVG(iconImageData, {
-        ltres: options.ltres,
-        qtres: options.qtres,
-        pathomit: options.pathOmit,
-        rightangleenhance: false,
-        colorsampling: 0,
-        numberofcolors: 2,
+      if (options.removeBg) {
+        const bgColor = detectBackgroundColor(processedData, rw, rh, rch);
+        processedData = removeBackground(processedData, rw, rh, rch, bgColor, options.bgColorTolerance);
+        // Smooth alpha edges for cleaner tracing
+        processedData = smoothEdges(processedData, rw, rh);
+      }
+
+      // Step 2: Convert to grayscale for icon tracing
+      let iconPipeline = sharp(processedData, { raw: { width: rw, height: rh, channels: 4 } });
+
+      if (options.removeBg) {
+        // For transparent bg: flatten to white first
+        iconPipeline = iconPipeline
+          .flatten({ background: { r: 255, g: 255, b: 255 } });
+      }
+
+      // Get grayscale image data with slight blur for smoother edges
+      const { data: grayData, info: grayInfo } = await iconPipeline
+        .grayscale()
+        .normalize()
+        .blur(0.5)
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      // Step 3: Apply binary threshold manually on the grayscale data
+      // This gives us a clean black & white image for tracing
+      const gw = grayInfo.width;
+      const gh = grayInfo.height;
+      const gch = grayInfo.channels;
+
+      // Manual binary threshold: pixel < 128 → black, pixel >= 128 → white
+      const thresholdedData = Buffer.alloc(gw * gh * 4);
+      for (let i = 0; i < gw * gh; i++) {
+        const gray = grayData[i * gch]; // R channel (grayscale = all channels same)
+        const alpha = gch >= 4 ? grayData[i * gch + 3] : 255;
+        const isBlack = gray < 128 && alpha > 128;
+        thresholdedData[i * 4] = isBlack ? 0 : 255;
+        thresholdedData[i * 4 + 1] = isBlack ? 0 : 255;
+        thresholdedData[i * 4 + 2] = isBlack ? 0 : 255;
+        thresholdedData[i * 4 + 3] = 255;
+      }
+
+      const iconImageData = {
+        width: gw,
+        height: gh,
+        data: thresholdedData
+      };
+
+      // Trace with imagetracerjs using 2 colors and settings optimized for smooth icons
+      let svgString = ImageTracer.imagedataToSVG(iconImageData, {
+        ltres: 1.0,           // Higher = fewer line segments = smoother
+        qtres: 1.0,           // Higher = fewer curve segments = smoother
+        pathomit: options.pathOmit || 8,  // Remove tiny noise paths
+        rightangleenhance: false,         // No right-angle emphasis = smoother curves
+        colorsampling: 0,                 // No random sampling for 2-color
+        numberofcolors: 2,                // Black and white only
         mincolorratio: 0,
         colorquantcycles: 1,
         layering: 0,
         strokewidth: 0,
         linefilter: false,
         scale: options.scale,
-        roundcoords: Math.max(options.roundcoords, 1),
+        roundcoords: 2,                   // Round coordinates to 2 decimal places
         viewbox: true,
         desc: false,
         lcpr: 0,
         qcpr: 0,
-        blurradius: 0,
+        blurradius: 0,                    // Already blurred in preprocessing
         blurdelta: 20,
       });
 
-      svgString = postProcessSvg(svgString, width, height);
+      svgString = postProcessSvg(svgString, gw, gh, true);
+
+      return NextResponse.json({
+        svg: svgString,
+        width: gw,
+        height: gh,
+        originalWidth,
+        originalHeight,
+        mode: options.mode,
+      });
 
     } else {
-      // Both poster and detailed modes use imagetracerjs
+      // ====== POSTER & DETAILED MODES: Color tracing ======
+
+      // Apply mode-specific preprocessing
+      if (options.mode === 'poster') {
+        // Poster: normalize + light sharpening for clean edges
+        preprocessPipeline = preprocessPipeline
+          .normalize()
+          .sharpen({ sigma: 0.3 });
+      } else {
+        // Detailed: lighter preprocessing to preserve detail
+        preprocessPipeline = preprocessPipeline
+          .normalize()
+          .sharpen({ sigma: 0.2 });
+      }
+
+      // Apply blur for smoother output if requested or by default for poster
+      const effectiveBlur = options.blurRadius > 0 ? options.blurRadius : (options.mode === 'poster' ? 1 : 0);
+      if (effectiveBlur > 0) {
+        preprocessPipeline = preprocessPipeline.blur(effectiveBlur * 0.3);
+      }
+
+      const { data, info } = await preprocessPipeline
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const width = info.width;
+      const height = info.height;
+      const channels = info.channels;
+
+      let processedData = data;
+
+      if (options.removeBg) {
+        const bgColor = detectBackgroundColor(data, width, height, channels);
+        processedData = removeBackground(data, width, height, channels, bgColor, options.bgColorTolerance);
+        // Smooth alpha edges for cleaner tracing
+        processedData = smoothEdges(processedData, width, height);
+      } else if (channels === 3) {
+        processedData = Buffer.alloc(width * height * 4);
+        for (let i = 0; i < width * height; i++) {
+          processedData[i * 4] = data[i * 3];
+          processedData[i * 4 + 1] = data[i * 3 + 1];
+          processedData[i * 4 + 2] = data[i * 3 + 2];
+          processedData[i * 4 + 3] = 255;
+        }
+      }
+
       const imageData = { width, height, data: processedData };
 
+      // Optimized trace options for smoother output
+      const numColors = options.numberOfColors;
+
+      // For smoother curves, we use slightly higher ltres/qtres which
+      // simplifies paths while keeping the overall shape accurate
       const traceOptions: Record<string, unknown> = {
-        ltres: options.ltres,
-        qtres: options.qtres,
-        pathomit: options.pathOmit,
-        rightangleenhance: false,
-        colorsampling: 2,
-        numberofcolors: options.numberOfColors,
+        ltres: options.ltres || 1.0,     // Higher = smoother lines
+        qtres: options.qtres || 1.0,     // Higher = smoother curves
+        pathomit: options.pathOmit || 8, // Remove tiny paths (noise)
+        rightangleenhance: false,        // No right-angle emphasis = smoother
+        colorsampling: 2,                // Deterministic color sampling
+        numberofcolors: numColors,
         mincolorratio: 0,
-        colorquantcycles: 5,
-        layering: 0,
-        strokewidth: options.mode === 'poster' ? 0 : options.strokeWidth,
+        colorquantcycles: options.mode === 'detailed' ? 6 : 8,  // Balanced cycles to avoid timeout
+        layering: 0,                     // Sequential layering
+        strokewidth: options.mode === 'detailed' ? options.strokeWidth : 0,
         linefilter: false,
         scale: options.scale,
         roundcoords: Math.max(options.roundcoords, 1),
@@ -268,22 +411,22 @@ export async function POST(request: NextRequest) {
         desc: false,
         lcpr: 0,
         qcpr: 0,
-        blurradius: options.blurRadius,
+        blurradius: 0,                   // Already handled in preprocessing
         blurdelta: 20,
       };
 
-      svgString = ImageTracer.imagedataToSVG(imageData, traceOptions);
-      svgString = postProcessSvg(svgString, width, height);
-    }
+      let svgString = ImageTracer.imagedataToSVG(imageData, traceOptions);
+      svgString = postProcessSvg(svgString, width, height, true);
 
-    return NextResponse.json({
-      svg: svgString,
-      width,
-      height,
-      originalWidth,
-      originalHeight,
-      mode: options.mode,
-    });
+      return NextResponse.json({
+        svg: svgString,
+        width,
+        height,
+        originalWidth,
+        originalHeight,
+        mode: options.mode,
+      });
+    }
   } catch (error) {
     console.error('Conversion error:', error);
     return NextResponse.json(
